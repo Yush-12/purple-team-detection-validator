@@ -1,0 +1,20 @@
+# Purple Team Detection Validator - SIEM Configuration Template
+
+# SIEM Connection Details
+siem:
+  type: "elastic" # Currently supported: elastic
+  host: "http://localhost:9200"
+  index_pattern: "logs-*"
+  
+  # Authentication (Choose one)
+  # api_key: "YOUR_API_KEY"
+  # username: "elastic"
+  # password: "changeme"
+
+# Simulation Runner Settings
+runner:
+  delay_after_sim_seconds: 5
+
+# Reporting Settings
+reporting:
+  output_dir: "reports/"
