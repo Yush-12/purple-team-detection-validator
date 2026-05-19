@@ -1,0 +1,20 @@
+id: "T1105"
+name: "Ingress Tool Transfer"
+tactic: "Command and Control"
+description: "Simulate file transfer by curling the local Elasticsearch/Kibana stack to download a benign file without external internet dependencies."
+reference: "https://attack.mitre.org/techniques/T1105/"
+command_linux: "curl -s -o /tmp/purpleteam/kibana_check.html http://localhost:5601/"
+command_windows: "powershell.exe -Command \"Invoke-WebRequest -Uri http://localhost:5601/ -OutFile C:\\Temp\\purpleteam\\kibana_check.html -UseBasicParsing\""
+log_event:
+  event.action: "file_download"
+  process.name: "curl"
+  network.protocol: "http"
+  process.command_line: "curl -s -o /tmp/purpleteam/kibana_check.html http://localhost:5601/"
+expected_keywords:
+  - "file_download"
+  - "curl"
+  - "http"
+kql_rule: "event.action: \"file_download\" AND network.protocol: \"http\""
+remediation:
+  gap_description: "Benign file transfer via curl was not detected by the SIEM rules."
+  recommendation: "Monitor command lines for well-known downloaders like curl, wget, or powershell.exe invoking download methods. Create alerts for downloads from internal systems to unapproved paths."

@@ -1,12 +1,13 @@
-# Purple Team Detection Validator - SIEM Configuration Template
+# Purple Team Detection Validator - SIEM Configuration (Realistic Edition)
 
 # SIEM Connection Details
 siem:
-  type: "elastic" # Currently supported: elastic
+  type: "elastic" 
   host: "http://localhost:9200"
-  index_pattern: "logs-*"
+  kibana_host: "http://localhost:5601"
+  index_pattern: "purpleteam-*"
   
-  # Authentication (Choose one)
+  # Authentication (Choose one - Uncomment if xpack security is enabled in your stack)
   # api_key: "YOUR_API_KEY"
   # username: "elastic"
   # password: "changeme"

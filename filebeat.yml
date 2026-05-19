@@ -1,0 +1,19 @@
+filebeat.inputs:
+  - type: log
+    paths:
+      - /tmp/purpleteam/events.log
+    json.keys_under_root: true
+    json.add_error_key: true
+
+  - type: log
+    paths:
+      - /var/log/auth.log
+    fields:
+      log_type: auth
+
+output.elasticsearch:
+  hosts: ["elasticsearch:9200"]
+  index: "purpleteam-%{+yyyy.MM.dd}"
+
+setup.kibana:
+  host: "kibana:5601"

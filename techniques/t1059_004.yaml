@@ -1,0 +1,19 @@
+id: "T1059.004"
+name: "Command and Scripting Interpreter: Unix Shell"
+tactic: "Execution"
+description: "Simulate shell execution by executing a base64-encoded bash command."
+reference: "https://attack.mitre.org/techniques/T1059/004/"
+command_linux: "echo \"ZWNobyAiSGVsbG8iID4gL2Rldi9udWxs\" | base64 -d | bash"
+command_windows: "powershell.exe -Command \"[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('d3JpdGUtaG9zdCAnaGVsbG8n')) | iex\""
+log_event:
+  event.action: "shell_execution"
+  process.name: "bash"
+  process.command_line: "echo \"ZWNobyAiSGVsbG8iID4gL2Rldi9udWxs\" | base64 -d | bash"
+expected_keywords:
+  - "shell_execution"
+  - "base64"
+  - "bash"
+kql_rule: "event.action: \"shell_execution\" AND process.command_line: *base64*"
+remediation:
+  gap_description: "Base64 encoded shell execution was not detected by the SIEM."
+  recommendation: "Enable process command line auditing. Build SIEM rules to detect standard process execution with suspicious string patterns like 'base64 -d', 'base64 --decode', or PowerShell '-EncodedCommand' invocation."
