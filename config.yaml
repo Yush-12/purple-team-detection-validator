@@ -1,0 +1,7 @@
+elasticsearch:
+  url: "http://localhost:9200"
+  time_window_seconds: 120
+framework:
+  techniques_dir: "./techniques/"
+  output_dir: "./reports/"
+  post_execution_delay: 25

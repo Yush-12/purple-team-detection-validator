@@ -1,17 +1,12 @@
-id: "T1078"
-name: "Valid Accounts"
+technique_id: "T1078"
+name: "Valid Accounts - Brute Force Login Simulation"
 tactic: "Defense Evasion"
-description: "Simulates SSH authentication brute-force by executing 5 failed logins on localhost to generate pam_unix authentication failures."
-reference: "https://attack.mitre.org/techniques/T1078/"
-command_linux: "for i in {1..5}; do ssh -o PasswordAuthentication=yes -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=2 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null invaliduser$i@localhost true; done"
-command_windows: "powershell.exe -Command \"1..5 | ForEach-Object { ssh -o PasswordAuthentication=yes -o PubkeyAuthentication=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=2 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null invaliduser$_@localhost }\""
-log_event:
-  event.dataset: "system.auth"
-  message: "sshd[12345]: Failed password for invaliduser from 127.0.0.1 port 56789 ssh2"
-expected_keywords:
-  - "authentication failure"
-  - "Failed password"
-kql_rule: "event.dataset: \"system.auth\" AND message: *authentication failure*"
-remediation:
-  gap_description: "SSH failed logins and account abuse simulation was not detected."
-  recommendation: "Ensure /var/log/auth.log or equivalent system authentication logs are forwarded to SIEM. Set up threshold alert for >5 failed SSH login attempts from a single host within a short window."
+description: "Simulate SSH brute-force by executing 5 failed login attempts against localhost to generate pam_unix authentication failures in auth.log."
+commands:
+  - "for i in 1 2 3 4 5; do ssh -o BatchMode=yes -o ConnectTimeout=2 wronguser@localhost echo test 2>/dev/null; done"
+cleanup_commands: []
+log_source: "system-auth"
+detection_query: "log_type:\"auth\" AND message:*authentication failure*"
+expected_fields:
+  log_type: "auth"
+  message: "authentication failure"

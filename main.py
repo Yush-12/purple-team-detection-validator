@@ -1,7 +1,5 @@
 """
-main.py — CLI entry point for the Purple Team Detection Validator (Realistic Edition)
-
-This is a wrapper that delegates to orchestrator.py.
+main.py — CLI entry point for the Purple Team Detection Validator.
 """
 
 from orchestrator import main

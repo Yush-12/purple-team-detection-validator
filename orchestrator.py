@@ -1,214 +1,277 @@
+"""
+orchestrator.py — CLI entrypoint for the Purple Team Detection Validation Framework.
+"""
+
+import argparse
+import json
+import logging
 import os
+import platform
 import sys
 import time
-import argparse
-import logging
 import yaml
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from executor import TechniqueExecutor
-from siem_querier import SiemQuerier
-from report_engine import ReportEngine
+from technique_schema import Technique, load_all_techniques, load_technique
+from executor import TechniqueExecutor, ExecutionResult
+from siem_querier import SIEMQuerier, DetectionResult
+from report_engine import calculate_metrics, save_reports
 
-logger = logging.getLogger(__name__)
-
-SUPPORTED_TECHNIQUES = ["T1046", "T1105", "T1078", "T1070.004", "T1059.004"]
+logger = logging.getLogger("purpleteam")
 
 
-def load_yaml_config(config_path: str) -> dict:
-    """Loads SIEM config YAML."""
-    if not os.path.exists(config_path):
-        logger.error(f"Configuration file not found: {config_path}")
-        raise FileNotFoundError(f"Config path {config_path} does not exist.")
-        
-    with open(config_path, "r", encoding="utf-8") as f:
+def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
+    """Load framework configuration from YAML file."""
+    path = Path(config_path)
+    if not path.exists():
+        logger.error("Configuration file not found: %s", config_path)
+        sys.exit(1)
+
+    with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
-def run_orchestration(
-    config_path: str = "config/siem_config.yaml",
-    dry_run: bool = False,
-    mock_siem: bool = False,
-    techniques_filter: Optional[List[str]] = None,
-    report_dir: str = "reports"
-) -> int:
-    """
-    Core execution routine. Orchestrates provisioning, execution, querying, and reporting.
-    """
-    logger.info("=" * 60)
-    logger.info("=== PURPLE TEAM DETECTION VALIDATION FRAMEWORK STARTING ===")
-    logger.info("=" * 60)
+def setup_logging(log_dir: str = "logs") -> None:
+    """Configure dual logging: INFO to console, DEBUG to timestamped log file."""
+    log_path = Path(log_dir)
+    log_path.mkdir(parents=True, exist_ok=True)
 
-    # 1. Load configuration
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    log_file = log_path / f"run_{timestamp}.log"
+
+    root_logger = logging.getLogger("purpleteam")
+    root_logger.setLevel(logging.DEBUG)
+
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
+    console_handler.setFormatter(console_fmt)
+
+    file_handler = logging.FileHandler(str(log_file), encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s — %(message)s")
+    file_handler.setFormatter(file_fmt)
+
+    root_logger.addHandler(console_handler)
+    root_logger.addHandler(file_handler)
+
+    logger.info("Log file: %s", log_file)
+
+
+def filter_techniques(
+    techniques: List[Technique],
+    technique_id: Optional[str],
+    tactic: Optional[str],
+) -> List[Technique]:
+    """Apply optional technique ID or tactic filters."""
+    filtered = techniques
+
+    if technique_id:
+        filtered = [t for t in filtered if t.technique_id == technique_id]
+        if not filtered:
+            logger.error("No technique found matching ID: %s", technique_id)
+            sys.exit(1)
+
+    if tactic:
+        filtered = [t for t in filtered if t.tactic.lower() == tactic.lower()]
+        if not filtered:
+            logger.error("No techniques found matching tactic: %s", tactic)
+            sys.exit(1)
+
+    return filtered
+
+
+def print_run_plan(techniques: List[Technique]) -> bool:
+    """Print the list of techniques about to execute and ask user to confirm."""
+    print("")
+    print("=" * 70)
+    print("  RUN PLAN")
+    print("=" * 70)
+    print(f"  Techniques to execute: {len(techniques)}")
+    print("-" * 70)
+
+    for i, t in enumerate(techniques, start=1):
+        print(f"  {i}. [{t.technique_id}] {t.name} ({t.tactic})")
+        print(f"     Commands: {len(t.commands)}, Cleanup: {len(t.cleanup_commands)}, Log: {t.log_source}")
+
+    print("-" * 70)
+    print("")
+
     try:
-        config = load_yaml_config(config_path)
-    except Exception as e:
-        logger.critical(f"Failed to load configuration: {e}")
-        return 1
+        answer = input("  Proceed with execution? [y/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print("")
+        return False
 
-    # 2. Initialize SIEM Querier
-    querier = SiemQuerier(config)
-    
-    # 3. Resolve techniques to run
-    to_run = []
-    filter_set = set(t.strip().upper() for t in techniques_filter) if techniques_filter else None
-    
-    # Instantiate executor to load the techniques YAML definitions
-    executor = TechniqueExecutor(dry_run=dry_run)
-    
-    tech_definitions = []
-    for tid in SUPPORTED_TECHNIQUES:
-        try:
-            tech_def = executor.load_technique(tid)
-            tech_definitions.append(tech_def)
-            
-            # Filter matches
-            if filter_set:
-                if tid.upper() in filter_set or tid.replace(".", "_").upper() in filter_set:
-                    to_run.append(tid)
-            else:
-                to_run.append(tid)
-        except Exception as e:
-            logger.error(f"Failed to load technique definition for {tid}: {e}")
+    return answer in ("y", "yes")
 
-    if not to_run:
-        logger.error("[ORCHESTRATOR] No valid techniques identified to execute. Exiting.")
-        return 1
 
-    logger.info(f"[ORCHESTRATOR] Resolved {len(to_run)} technique(s) to execute: {', '.join(to_run)}")
+def countdown(seconds: int, label: str = "Waiting for log ingestion") -> None:
+    """Print a countdown timer to stdout."""
+    for remaining in range(seconds, 0, -1):
+        sys.stdout.write(f"\r  {label}... {remaining}s remaining  ")
+        sys.stdout.flush()
+        time.sleep(1)
+    sys.stdout.write(f"\r  {label}... done.                      \n")
+    sys.stdout.flush()
 
-    # 4. Programmatic Kibana Detection Rules Setup
-    if not dry_run and not mock_siem:
-        # Test SIEM cluster connection first
-        if querier.test_connection():
-            logger.info("[ORCHESTRATOR] Connected to ELK stack. Deploying detection rules...")
-            # We provision rules based on all supported techniques
-            querier.provision_rules(tech_definitions)
+
+def run(args: argparse.Namespace) -> None:
+    """Main execution flow: load, execute, query, report."""
+    config = load_config(args.config)
+
+    es_config = config.get("elasticsearch", {})
+    fw_config = config.get("framework", {})
+
+    techniques_dir = fw_config.get("techniques_dir", "./techniques/")
+    output_dir = fw_config.get("output_dir", "./reports/")
+    post_delay = fw_config.get("post_execution_delay", 25)
+    es_url = es_config.get("url", "http://localhost:9200")
+    time_window = es_config.get("time_window_seconds", 120)
+
+    logger.info("Loading techniques from: %s", techniques_dir)
+    techniques = load_all_techniques(techniques_dir)
+    logger.info("Loaded %d technique(s)", len(techniques))
+
+    techniques = filter_techniques(techniques, args.technique, args.tactic)
+
+    if not print_run_plan(techniques):
+        logger.info("Execution cancelled by user.")
+        sys.exit(0)
+
+    Path("/tmp/purpleteam").mkdir(parents=True, exist_ok=True)
+
+    executor = TechniqueExecutor(timeout=30)
+    querier = SIEMQuerier(es_url=es_url, time_window_seconds=time_window)
+
+    execution_results: List[ExecutionResult] = []
+    detection_results: List[DetectionResult] = []
+
+    for i, technique in enumerate(techniques, start=1):
+        print("")
+        logger.info(
+            "[%d/%d] [%s] %s — executing...",
+            i, len(techniques), technique.technique_id, technique.name,
+        )
+
+        exec_result = executor.execute(technique)
+        execution_results.append(exec_result)
+
+        if exec_result.success:
+            logger.info(
+                "[%s] Execution completed — %d/%d commands succeeded",
+                technique.technique_id, exec_result.commands_run, exec_result.commands_run,
+            )
         else:
-            logger.warning("[ORCHESTRATOR] SIEM cluster connection failed. Skipping rule provisioning.")
+            logger.warning(
+                "[%s] Execution had failures — %d/%d commands failed: %s",
+                technique.technique_id,
+                exec_result.commands_failed,
+                exec_result.commands_run,
+                exec_result.error,
+            )
 
-    # 5. Execute Techniques
-    execution_results = []
-    for tid in to_run:
-        try:
-            exec_res = executor.execute(tid)
-            execution_results.append(exec_res)
-        except Exception as e:
-            logger.error(f"[ORCHESTRATOR] Execution failed for technique {tid}: {e}")
+        countdown(post_delay, f"[{technique.technique_id}] Waiting for log ingestion")
 
-    # 6. Wait for Filebeat log harvesting and ingestion
-    delay_seconds = config.get("runner", {}).get("delay_after_sim_seconds", 5)
-    if not dry_run:
-        logger.info(f"[ORCHESTRATOR] Waiting {delay_seconds}s for Filebeat ingestion and ES indexing...")
-        time.sleep(delay_seconds)
+        logger.info("[%s] Querying Elasticsearch for detection...", technique.technique_id)
+        detection = querier.check_visibility(technique, exec_result.start_time)
+        detection_results.append(detection)
 
-    # 7. Query SIEM for log visibility & rule fires
-    full_report_results = []
-    
-    for exec_res in execution_results:
-        tid = exec_res["technique_id"]
-        tech_def = executor.load_technique(tid)
-        
-        siem_outcome = {
-            "technique_id": tid,
-            "log_visible": False,
-            "detection_fired": False,
-            "matched_docs": 0,
-            "notes": ""
-        }
-
-        if dry_run:
-            siem_outcome["notes"] = "Dry run mode. Verification skipped."
-        elif mock_siem:
-            siem_outcome["notes"] = "Mock SIEM mode. Verification skipped."
-            # Set artificial visibility for mock dashboard demo if execution succeeded
-            if exec_res["success"]:
-                siem_outcome["log_visible"] = True
-                siem_outcome["detection_fired"] = True
+        if detection.detection_status == "DETECTED":
+            logger.info("[%s] DETECTED — %d matching document(s)", technique.technique_id, detection.matching_doc_count)
+        elif detection.detection_status == "NOT_DETECTED":
+            logger.warning("[%s] NOT DETECTED — 0 matching documents", technique.technique_id)
         else:
-            try:
-                siem_outcome = querier.query_verification(tech_def, exec_res["timestamp"])
-            except Exception as e:
-                siem_outcome["notes"] = f"SIEM query error: {e}"
-                logger.error(f"[ORCHESTRATOR] Error verifying {tid}: {e}")
+            logger.error("[%s] LOG PIPELINE ERROR — query failed", technique.technique_id)
 
-        full_report_results.append({
-            "execution": exec_res,
-            "siem": siem_outcome,
-            "remediation": tech_def.get("remediation", {})
-        })
+    run_metadata: Dict[str, str] = {
+        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "hostname": platform.node(),
+        "operator": os.getenv("USER", os.getenv("USERNAME", "unknown")),
+        "version": "1.0.0",
+        "config": str(Path(args.config).resolve()),
+    }
 
-    # 8. Generate Reports
-    reporter = ReportEngine(output_dir=report_dir)
-    outputs = reporter.generate(full_report_results)
-    
-    logger.info("[ORCHESTRATOR] All operations complete.")
-    for fmt, path in outputs.items():
-        logger.info(f"[ORCHESTRATOR] [{fmt.upper()}] Report saved: {path}")
+    metrics = calculate_metrics(detection_results)
+    report_paths = save_reports(detection_results, metrics, run_metadata, output_dir)
 
-    # Return exit code: non-zero if gaps exist and not running mock/dry
-    gaps = sum(1 for r in full_report_results if not r["siem"]["detection_fired"])
-    if gaps > 0 and not dry_run and not mock_siem:
-        logger.warning(f"[ORCHESTRATOR] {gaps} detection gaps identified.")
-        return 1
-        
-    return 0
+    print("")
+    logger.info("Reports saved:")
+    for fmt, path in report_paths.items():
+        logger.info("  %s: %s", fmt.upper(), path)
 
 
-def main():
+def report(args: argparse.Namespace) -> None:
+    """Regenerate reports from a previously saved JSON results file."""
+    json_path = Path(args.input)
+    if not json_path.exists():
+        logger.error("Input JSON file not found: %s", args.input)
+        sys.exit(1)
+
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    results: List[DetectionResult] = []
+    for r in data.get("results", []):
+        results.append(DetectionResult(
+            technique_id=r["technique_id"],
+            technique_name=r["technique_name"],
+            tactic=r["tactic"],
+            log_source_checked=r["log_source_checked"],
+            raw_log_visible=r["raw_log_visible"],
+            matching_doc_count=r["matching_doc_count"],
+            detection_status=r["detection_status"],
+            query_used=r["query_used"],
+            execution_time=datetime.fromisoformat(r["execution_time"]),
+            query_time=datetime.fromisoformat(r["query_time"]),
+        ))
+
+    run_metadata = data.get("run_metadata", {})
+    run_metadata["regenerated_from"] = str(json_path.resolve())
+    run_metadata["regenerated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    config = load_config(args.config)
+    output_dir = config.get("framework", {}).get("output_dir", "./reports/")
+
+    metrics = calculate_metrics(results)
+    report_paths = save_reports(results, metrics, run_metadata, output_dir)
+
+    print("")
+    logger.info("Regenerated reports saved:")
+    for fmt, path in report_paths.items():
+        logger.info("  %s: %s", fmt.upper(), path)
+
+
+def main() -> None:
+    """Parse CLI arguments and dispatch to the appropriate command."""
     parser = argparse.ArgumentParser(
-        description="Purple Team Detection Validation Framework (Realistic Edition)"
+        description="Purple Team Detection Validation Framework",
     )
     parser.add_argument(
         "--config",
-        default="config/siem_config.yaml",
-        help="Path to SIEM config YAML (default: config/siem_config.yaml)"
+        default="config.yaml",
+        help="Path to config.yaml (default: config.yaml)",
     )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Simulate execution without modifying system state or running shell queries"
-    )
-    parser.add_argument(
-        "--mock-siem",
-        action="store_true",
-        help="Skip SIEM connectivity queries and return mock detection events"
-    )
-    parser.add_argument(
-        "--techniques",
-        default=None,
-        help="Comma-separated technique IDs to run (e.g. T1046,T1105). Default runs all 5."
-    )
-    parser.add_argument(
-        "--output-dir",
-        default="reports",
-        help="Directory to save report outputs (default: reports)"
-    )
-    
+
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    run_parser = subparsers.add_parser("run", help="Execute techniques and validate detections")
+    run_parser.add_argument("--technique", default=None, help="Run a single technique by ID (e.g. T1046)")
+    run_parser.add_argument("--tactic", default=None, help="Filter techniques by tactic (e.g. Discovery)")
+
+    report_parser = subparsers.add_parser("report", help="Regenerate report from a previous JSON output")
+    report_parser.add_argument("--input", required=True, help="Path to a previously saved report JSON file")
+
     args = parser.parse_args()
-    
-    # Set up basic logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            logging.StreamHandler(sys.stdout)
-        ]
-    )
 
-    techs_filter = None
-    if args.techniques:
-        techs_filter = [t.strip() for t in args.techniques.split(",")]
+    setup_logging()
 
-    exit_code = run_orchestration(
-        config_path=args.config,
-        dry_run=args.dry_run,
-        mock_siem=args.mock_siem,
-        techniques_filter=techs_filter,
-        report_dir=args.output_dir
-    )
-    sys.exit(exit_code)
+    if args.command == "run":
+        run(args)
+    elif args.command == "report":
+        report(args)
 
 
 if __name__ == "__main__":

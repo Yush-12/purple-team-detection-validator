@@ -17,3 +17,8 @@ output.elasticsearch:
 
 setup.kibana:
   host: "kibana:5601"
+
+setup.ilm.enabled: false
+setup.template.name: "purpleteam"
+setup.template.pattern: "purpleteam-*"
+

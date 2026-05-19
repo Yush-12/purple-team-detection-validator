@@ -1,18 +1,16 @@
-id: "T1046"
+technique_id: "T1046"
 name: "Network Service Discovery"
 tactic: "Discovery"
-description: "Scan local loopback subnet using nmap -sn to discover active hosts without root permissions."
-reference: "https://attack.mitre.org/techniques/T1046/"
-command_linux: "nmap -sn 127.0.0.1/24"
-command_windows: "powershell.exe -Command \"1..10 | ForEach-Object { Test-Connection -ComputerName 127.0.0.1 -Count 1 -Quiet }\""
-log_event:
+description: "Scan local loopback subnet using nmap ping sweep and emit a structured JSON event to the purpleteam events log."
+commands:
+  - "mkdir -p /tmp/purpleteam"
+  - "nmap -sn 127.0.0.0/24 -oG /tmp/purpleteam/nmap_out.txt"
+  - "python3 -c \"import json,datetime; open('/tmp/purpleteam/events.log','a').write(json.dumps({'@timestamp':datetime.datetime.utcnow().isoformat(),'event':{'action':'network_scan'},'process':{'name':'nmap'},'technique_id':'T1046','tactic':'Discovery'})+'\\n')\""
+cleanup_commands:
+  - "rm -f /tmp/purpleteam/nmap_out.txt"
+log_source: "purpleteam-events"
+detection_query: "event.action:\"network_scan\" AND process.name:\"nmap\""
+expected_fields:
   event.action: "network_scan"
   process.name: "nmap"
-  process.command_line: "nmap -sn 127.0.0.1/24"
-expected_keywords:
-  - "network_scan"
-  - "nmap"
-kql_rule: "event.action: \"network_scan\" AND process.name: \"nmap\""
-remediation:
-  gap_description: "Network scanning was not detected by the SIEM rules."
-  recommendation: "Enable netflow logging or process logging for 'nmap'. Deploy a Kibana rule triggering on processes named 'nmap' performing sweep scans (e.g. >10 ports/hosts in 60s)."
+  technique_id: "T1046"

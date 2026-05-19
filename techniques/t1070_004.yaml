@@ -1,20 +1,16 @@
-id: "T1070.004"
+technique_id: "T1070.004"
 name: "Indicator Removal on Host: File Deletion"
 tactic: "Defense Evasion"
-description: "Simulate file deletion by touching a dummy log file and deleting it via rm."
-reference: "https://attack.mitre.org/techniques/T1070/004/"
-command_linux: "touch /tmp/purpleteam/dummy.log && rm /tmp/purpleteam/dummy.log"
-command_windows: "powershell.exe -Command \"New-Item -Path C:\\Temp\\purpleteam\\dummy.log -ItemType File -Force; Remove-Item -Path C:\\Temp\\purpleteam\\dummy.log -Force\""
-log_event:
+description: "Create a dummy log file and delete it to simulate an attacker removing forensic artifacts, then emit a structured JSON event to the purpleteam events log."
+commands:
+  - "mkdir -p /tmp/purpleteam/logs"
+  - "echo \"dummy log content\" > /tmp/purpleteam/logs/app.log"
+  - "rm -f /tmp/purpleteam/logs/app.log"
+  - "python3 -c \"import json,datetime; open('/tmp/purpleteam/events.log','a').write(json.dumps({'@timestamp':datetime.datetime.utcnow().isoformat(),'event':{'action':'file_deletion'},'file':{'path':'/tmp/purpleteam/logs/app.log'},'technique_id':'T1070.004','tactic':'Defense Evasion'})+'\\n')\""
+cleanup_commands: []
+log_source: "purpleteam-events"
+detection_query: "event.action:\"file_deletion\" AND file.path:*app.log*"
+expected_fields:
   event.action: "file_deletion"
-  process.name: "rm"
-  file.path: "/tmp/purpleteam/dummy.log"
-  process.command_line: "rm /tmp/purpleteam/dummy.log"
-expected_keywords:
-  - "file_deletion"
-  - "rm"
-  - "dummy.log"
-kql_rule: "event.action: \"file_deletion\" AND file.path: *dummy.log*"
-remediation:
-  gap_description: "Deletion of log files was not detected."
-  recommendation: "Enable file integrity monitoring (FIM) or auditd rule watching for writes/deletions on critical system log directories (e.g. /var/log or custom paths). Alert on 'rm' execution targeting logs."
+  file.path: "/tmp/purpleteam/logs/app.log"
+  technique_id: "T1070.004"
