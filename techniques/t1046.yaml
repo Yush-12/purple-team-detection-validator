@@ -4,7 +4,7 @@ tactic: "Discovery"
 description: "Scan local loopback subnet using nmap ping sweep and emit a structured JSON event to the purpleteam events log."
 commands:
   - "mkdir -p /tmp/purpleteam"
-  - "nmap -sn 127.0.0.0/24 -oG /tmp/purpleteam/nmap_out.txt"
+  - "nmap -sn 127.0.0.1 -oG /tmp/purpleteam/nmap_out.txt"
   - "python3 -c \"import json,datetime; open('/tmp/purpleteam/events.log','a').write(json.dumps({'@timestamp':datetime.datetime.utcnow().isoformat(),'event':{'action':'network_scan'},'process':{'name':'nmap'},'technique_id':'T1046','tactic':'Discovery'})+'\\n')\""
 cleanup_commands:
   - "rm -f /tmp/purpleteam/nmap_out.txt"

@@ -24,9 +24,11 @@ wheels/
 # Virtual Environment
 venv/
 ENV/
+.venv/
 
 # Logs
 *.log
+logs/
 auth_simulation.log
 
 # Project Specific

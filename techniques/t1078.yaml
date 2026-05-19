@@ -3,7 +3,7 @@ name: "Valid Accounts - Brute Force Login Simulation"
 tactic: "Defense Evasion"
 description: "Simulate SSH brute-force by executing 5 failed login attempts against localhost to generate pam_unix authentication failures in auth.log."
 commands:
-  - "for i in 1 2 3 4 5; do ssh -o BatchMode=yes -o ConnectTimeout=2 wronguser@localhost echo test 2>/dev/null; done"
+  - "for i in 1 2 3 4 5; do ssh -o BatchMode=yes -o ConnectTimeout=2 wronguser@localhost echo test 2>/dev/null || true; done"
 cleanup_commands: []
 log_source: "system-auth"
 detection_query: "log_type:\"auth\" AND message:*authentication failure*"
